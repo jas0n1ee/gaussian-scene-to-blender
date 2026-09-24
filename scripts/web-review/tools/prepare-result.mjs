@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureResultDirectory } from './result-directory.mjs';
+import { activeIssuesForRevision, feedbackRevision } from '../lib/review-round.mjs';
 
 const toolDir = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, fallback = null) => { const i = process.argv.indexOf(name); return i < 0 ? fallback : process.argv[i + 1]; };
@@ -32,13 +33,20 @@ if (sourceHash === manifest.assets.B.sha256) throw new Error('修订 .blend 与�
 const responses = JSON.parse(await fs.readFile(responsesPath, 'utf8'));
 if (responses.result_revision !== revision || !responses.issues || typeof responses.issues !== 'object') throw new Error('responses.json 版本或结构不匹配');
 const packageDir = path.dirname(fullManifest);
-const activeIssues = [];
+const session = await fs.readFile(path.join(packageDir, 'review-session.json'), 'utf8').then(JSON.parse).catch((error) => {
+  if (error.code === 'ENOENT') return null;
+  throw error;
+});
+const sourceRevision = feedbackRevision(manifest, session);
+const issues = [];
 for (const id of manifest.issues || []) {
   const issue = JSON.parse(await fs.readFile(path.join(packageDir, 'issues', `${id}.json`), 'utf8'));
-  if (!issue.deleted_at && ['submitted', 'returned'].includes(issue.status)) activeIssues.push(id);
+  issues.push(issue);
 }
+const activeIssues = activeIssuesForRevision(issues, sourceRevision, manifest.base_revision).map((issue) => issue.issue_id);
 if (!activeIssues.length) throw new Error('没有待处理的人类意见');
 for (const id of activeIssues) if (typeof responses.issues[id]?.response !== 'string' || !responses.issues[id].response.trim()) throw new Error(`${id} 缺少处理说明`);
+const scopedResponses = { ...responses, issues: Object.fromEntries(activeIssues.map((id) => [id, responses.issues[id]])) };
 const resultDir = path.join(packageDir, 'results', revision);
 await ensureResultDirectory(resultDir, { reviewId: manifest.review_id, baseRevision: manifest.base_revision, revision });
 const raw = path.join(resultDir, `B_${revision}.raw.glb`), final = path.join(resultDir, `B_${revision}.glb`);
@@ -52,7 +60,7 @@ report.optimization = { pipeline: 'glTF Transform dedup(material), flatten, join
 await fs.writeFile(path.join(resultDir, `B_${revision}.export.json`), `${JSON.stringify(report, null, 2)}\n`);
 await fs.rm(raw);
 await fs.rm(raw.replace(/\.glb$/, '.export.json'));
-await fs.writeFile(path.join(resultDir, 'responses.json'), `${JSON.stringify(responses, null, 2)}\n`);
+await fs.writeFile(path.join(resultDir, 'responses.json'), `${JSON.stringify(scopedResponses, null, 2)}\n`);
 await run(process.execPath, [path.join(toolDir, 'render-after.mjs'), '--manifest', fullManifest, '--revision', revision, ...(chrome ? ['--chrome', chrome] : [])]);
 manifest.results ??= [];
 manifest.results.push({ revision, directory: `results/${revision}`, status: 'awaiting_human_review' });

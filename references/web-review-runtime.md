@@ -34,19 +34,20 @@ node tools/review-session.mjs status --manifest "$MANIFEST"
 | 当前状态 | Agent 动作 | 下一状态 |
 | --- | --- | --- |
 | 尚未启动、paused、result_ready | `start`，核对健康状态并发 URL | reviewing |
-| reviewing | Human 明确说本轮审阅完成后执行 `finish` | feedback_submitted |
+| reviewing | Human 在网页点击“完成 Review”，服务记录当前版本意见并停止 | feedback_submitted |
+| reviewing | Human 已在对话中明确完成但未点击按钮时，Agent 执行 `finish` | feedback_submitted |
 | reviewing | 需要临时停服时执行 `pause` | paused |
 | feedback_submitted | 修订版结果已登记且同机位结果图齐备后执行 `publish-result` | result_ready |
 
 旧审阅包（例如已经由 Human 明确完成的 R33）没有 `review-session.json` 时，Agent 可一次性执行 `adopt-feedback --manifest "$MANIFEST"` 登记现有反馈，直接进入 `feedback_submitted`；它不启动服务，也不改写 Issue。只有确实收到 Human 完成信号时才用，已有状态的包不能重复接入。
 
-`finish` 会停止本轮服务并记录提交、草稿、通过、退回数量。**不因页面空闲、浏览器关闭或 Agent 看到若干 Issue 就推断 Human 已审完。** 当前 MVP 的完成信号来自对话；网页内“提交迭代并自动唤醒 Agent”属于后续功能。若 Human 说本轮没有问题，Agent 可 `finish` 后结束该轮，不必虚构结果版本。
+网页“完成 Review”只汇总当前审阅版本，保留过往版本的 Issue 与机位但在本轮侧栏隐藏；它写入 `review-session.json` 并停止本机服务。`finish` 是 Human 已在对话中明确完成、但未点击按钮时的 Agent 入口，同样会停止服务并记录当前版本的提交、草稿、通过、退回数量。**不因页面空闲、浏览器关闭或 Agent 看到若干 Issue 就推断 Human 已审完。** 按钮目前不会自动唤醒 Codex Agent；Agent 恢复工作时检查状态文件。若 Human 说本轮没有问题，Agent 可结束该轮，不必虚构结果版本。
 
 ```bash
 node tools/review-session.mjs finish --manifest "$MANIFEST"
 ```
 
-Agent 读取已提交且未删除的 Issue、机位和截图，在独立 `.blend` 副本修订；如果项目已有更晚累计版本或人工修改，先协调差异。准备逐 Issue 的 `responses.json` 后回填结果：
+Agent 只读取本轮完成版本中已提交且未删除的 Issue、机位和截图，在独立 `.blend` 副本修订；旧轮次 Issue 保留追溯，不再带入本轮结果。如果项目已有更晚累计版本或人工修改，先协调差异。准备逐 Issue 的 `responses.json` 后回填结果：
 
 ```bash
 node tools/prepare-result.mjs --manifest "$MANIFEST" --revision R34 \

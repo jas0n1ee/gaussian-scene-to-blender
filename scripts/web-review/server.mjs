@@ -63,7 +63,7 @@ async function fileResponse(req, res, file) {
   else createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res);
 }
 
-export async function createReviewServer({ manifestPath, port = 4173 } = {}) {
+export async function createReviewServer({ manifestPath, port = 4173, closeOnFinish = false } = {}) {
   if (!manifestPath) throw new Error('请用 --manifest 指定审阅包 manifest.json');
   const store = await new ReviewStore(manifestPath).initialize();
   const server = http.createServer(async (req, res) => {
@@ -77,6 +77,12 @@ export async function createReviewServer({ manifestPath, port = 4173 } = {}) {
         pid: process.pid,
       });
       if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, await store.state());
+      if (pathname === '/api/review/finish' && req.method === 'POST') {
+        const result = await store.finishReview();
+        json(res, 200, result);
+        if (closeOnFinish) setTimeout(() => server.close(), 250);
+        return;
+      }
       if (pathname === '/api/views' && req.method === 'POST') return json(res, 201, await store.saveView(await bodyJson(req)));
       if (pathname === '/api/issues' && req.method === 'POST') return json(res, 201, await store.saveIssue(await bodyJson(req)));
       const issueMatch = /^\/api\/issues\/([A-Za-z0-9_-]+_I\d+)$/.exec(pathname);
@@ -129,7 +135,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const manifestPath = idx >= 0 ? process.argv[idx + 1] : process.env.REVIEW_MANIFEST;
   const portIdx = process.argv.indexOf('--port');
   const port = portIdx >= 0 ? Number(process.argv[portIdx + 1]) : 4173;
-  createReviewServer({ manifestPath, port }).then(({ url }) => {
+  createReviewServer({ manifestPath, port, closeOnFinish: true }).then(({ url }) => {
     process.stdout.write(`网页审阅器：${url}\n审阅包：${path.resolve(manifestPath)}\n`);
   }).catch((error) => {
     process.stderr.write(`${error.message}\n`);

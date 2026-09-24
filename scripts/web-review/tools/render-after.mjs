@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { createReviewServer } from '../server.mjs';
+import { activeIssuesForRevision, feedbackRevision } from '../lib/review-round.mjs';
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i < 0 ? fallback : process.argv[i + 1]; };
 const manifestPath = arg('--manifest');
@@ -15,8 +16,14 @@ try {
   const resultDir = path.join(app.store.packageDir, 'results', revision);
   const model = path.join(resultDir, `B_${revision}.glb`);
   if (!(await fs.stat(model).catch(() => null))) throw new Error(`缺少 ${model}`);
+  const session = await app.store.reviewSession();
+  const sourceRevision = feedbackRevision(state.manifest, session);
+  const responses = JSON.parse(await fs.readFile(path.join(resultDir, 'responses.json'), 'utf8'));
+  const relevantViews = new Set(activeIssuesForRevision(state.issues, sourceRevision, state.manifest.base_revision)
+    .filter((issue) => responses.issues?.[issue.issue_id]?.response)
+    .map((issue) => issue.view_id));
   for (const { view_id: viewId } of state.views) {
-    if (!state.issues.some((issue) => issue.view_id === viewId && !issue.deleted_at)) continue;
+    if (!relevantViews.has(viewId)) continue;
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(`${app.url}/render-after.html?revision=${encodeURIComponent(revision)}&view=${encodeURIComponent(viewId)}`);
     await page.waitForFunction(() => window.__renderReady || window.__renderError, undefined, { timeout: 60000 });

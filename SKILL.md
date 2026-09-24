@@ -47,7 +47,7 @@ description: 从空间 3D Gaussian Splatting 扫描重建可编辑的 Blender �
 
 ## 人工 Review 与交互工具
 
-当用户要求准备人工 Review 或处理 Review 意见时，读取 [references/human-review.md](references/human-review.md)；实际启动、暂停、结束及发布结果时再读 [references/web-review-runtime.md](references/web-review-runtime.md)。审阅器代码随 Skill 位于 [scripts/web-review](scripts/web-review)，不要依赖某个项目目录中的 R33 专用启动脚本。Agent 负责核对审阅包、准备显示资产、启动本机服务并把实际 URL 发给 Human；Human 只负责在网页审阅和明确告知本轮完成。当前 MVP 不包含网页按钮自动唤醒 Agent；收到明确完成信号后由 Agent 结束本轮服务并继续处理。不要等待用户手工整理 Agent 已知的模型版本与路径。
+当用户要求准备人工 Review 或处理 Review 意见时，读取 [references/human-review.md](references/human-review.md)；实际启动、暂停、结束及发布结果时再读 [references/web-review-runtime.md](references/web-review-runtime.md)。审阅器代码随 Skill 位于 [scripts/web-review](scripts/web-review)，不要依赖某个项目目录中的 R33 专用启动脚本。Agent 负责核对审阅包、准备显示资产、启动本机服务并把实际 URL 发给 Human；Human 在网页点击“完成 Review”可将当前版本反馈写入状态并结束服务。当前 MVP 不包含网页按钮自动唤醒 Agent；Agent 恢复工作时读取状态、意见和同机位证据，不等待用户手工整理已知的模型版本与路径。
 
 当前目标工具为本机服务配合浏览器：左侧 Spark 显示完整扫描的流式 3DGS G，右侧 Three.js 显示从累计 `.blend` 导出的 GLB B。两侧在项目坐标中同步漫游；冻结机位后框选并填写意见。用户不需要关联模型对象，GLB 无需 `object_id`。人工复核可产生新机位，同机位可有多个问题，不按面积规定机位数量。保存干净双图和可复现的相机/标注 JSON；修改后按 Issue 展示 G、带反色框的修改前 B、修改后 B 三列图。
 

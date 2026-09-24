@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ReviewStore } from '../lib/review-store.mjs';
+import { activeIssuesForRevision, feedbackRevision } from '../lib/review-round.mjs';
 
 const runtimeDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const serverPath = path.join(runtimeDir, 'server.mjs');
@@ -110,10 +111,11 @@ async function ensureRuntime() {
   run('npm', ['run', 'build']);
 }
 
-async function issueCounts(manifest) {
+async function issueCounts(manifest, revision = null) {
   const counts = { submitted: 0, draft: 0, accepted: 0, returned: 0, deleted: 0 };
   for (const id of manifest.issues || []) {
     const issue = await readJson(path.join(packageDir, 'issues', `${id}.json`));
+    if (revision && (issue.base_revision || manifest.base_revision) !== revision) continue;
     if (issue.deleted_at) counts.deleted++;
     else counts[issue.status] = (counts[issue.status] || 0) + 1;
   }
@@ -179,16 +181,18 @@ async function start() {
 async function status() {
   const state = await readState();
   const manifest = await readJson(manifestPath);
-  return { ...(state || { phase: 'unstarted', manifest_path: manifestPath }), healthy: await health(state), issues: await issueCounts(manifest) };
+  const revision = state?.mode === 'result' ? state.result_revision : manifest.base_revision;
+  return { ...(state || { phase: 'unstarted', manifest_path: manifestPath }), healthy: await health(state), review_revision: revision, issues: await issueCounts(manifest, revision) };
 }
 
 async function finish() {
   const state = await readState();
   if (state?.phase !== 'reviewing') throw new Error('只有 reviewing 状态可以提交本轮 Review');
   const manifest = await readJson(manifestPath);
-  const counts = await issueCounts(manifest);
+  const revision = state.mode === 'result' ? state.result_revision : manifest.base_revision;
+  const counts = await issueCounts(manifest, revision);
   await stopOwned(state);
-  const next = { ...state, phase: 'feedback_submitted', url: null, pid: null, issue_counts: counts, updated_at: now() };
+  const next = { ...state, phase: 'feedback_submitted', completed_revision: revision, completed_at: now(), url: null, pid: null, issue_counts: counts, updated_at: now() };
   await saveState(next);
   return next;
 }
@@ -205,11 +209,11 @@ async function pause() {
 async function adoptFeedback() {
   if (await readState()) throw new Error('审阅包已有生命周期状态，不能再次接入历史反馈');
   const store = await new ReviewStore(manifestPath).initialize();
-  const counts = await issueCounts(store.manifest);
+  const counts = await issueCounts(store.manifest, store.manifest.base_revision);
   const state = {
     schema_version: 1, manifest_path: manifestPath, review_id: store.manifest.review_id,
     base_revision: store.manifest.base_revision, phase: 'feedback_submitted',
-    mode: 'base', result_revision: null, url: null, pid: null,
+    mode: 'base', result_revision: null, completed_revision: store.manifest.base_revision, url: null, pid: null,
     issue_counts: counts, adopted_legacy_feedback: true,
     started_at: null, updated_at: now(),
   };
@@ -228,9 +232,9 @@ async function publishResult() {
   if (!await exists(path.join(resultDir, `B_${revision}.glb`))) throw new Error('结果 GLB 缺失');
   const responses = await readJson(path.join(resultDir, 'responses.json'));
   if (responses.result_revision !== revision) throw new Error('结果回复的版本不匹配');
-  for (const id of manifest.issues || []) {
-    const issue = await readJson(path.join(packageDir, 'issues', `${id}.json`));
-    if (issue.deleted_at || !['submitted', 'returned'].includes(issue.status)) continue;
+  const issues = await Promise.all((manifest.issues || []).map((id) => readJson(path.join(packageDir, 'issues', `${id}.json`))));
+  for (const issue of activeIssuesForRevision(issues, feedbackRevision(manifest, state), manifest.base_revision)) {
+    const id = issue.issue_id;
     if (!responses.issues?.[id]?.response) throw new Error(`${id} 缺少 Agent 回复`);
     const afterFile = path.join(resultDir, 'views', issue.view_id, 'B_after.png');
     if (!await exists(afterFile)) throw new Error(`${id} 缺少 B_after`);

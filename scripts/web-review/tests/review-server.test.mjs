@@ -88,14 +88,57 @@ test('failed capture does not create a view or advance manifest', async (t) => {
   assert.equal(retried.value.view_id, 'V0001');
 });
 
+test('R35 completion records only R35 feedback and locks the round', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const oldView = await post(app.url, '/api/views', { camera, G: onePixel, B_before: onePixel });
+  await post(app.url, '/api/issues', { view_id: oldView.value.view_id, comment: 'R33 历史意见', annotations: [] });
+  const manifestPath = path.join(app.pkg, 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.results.push({ revision: 'R35', directory: 'results/R35' });
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  const resultDir = path.join(app.pkg, 'results', 'R35');
+  await fs.mkdir(resultDir, { recursive: true });
+  await fs.writeFile(path.join(resultDir, 'B_R35.glb'), Buffer.alloc(128, 3));
+  await fs.writeFile(path.join(resultDir, 'B_R35.export.json'), JSON.stringify({ glb_sha256: 'r35-hash' }));
+  await fs.writeFile(path.join(app.pkg, 'review-session.json'), JSON.stringify({
+    schema_version: 1, manifest_path: manifestPath, phase: 'reviewing', mode: 'result',
+    result_revision: 'R35', pid: process.pid, url: app.url,
+  }));
+  const state = await (await fetch(app.url + '/api/state')).json();
+  assert.equal(state.reviewRevision, 'R35');
+  assert.equal(state.activeRevision, 'R35');
+  assert.equal(state.reviewSession.phase, 'reviewing');
+  const oldIssue = await post(app.url, '/api/issues', { view_id: oldView.value.view_id, comment: '错误归入 R33', annotations: [] });
+  assert.equal(oldIssue.response.status, 400);
+
+  const r35Camera = { ...camera, render_settings: { B_before: { asset_sha256: 'r35-hash' } } };
+  const view = await post(app.url, '/api/views', { camera: r35Camera, G: onePixel, B_before: onePixel, model_revision: 'R35' });
+  assert.equal(view.response.status, 201);
+  const issue = await post(app.url, '/api/issues', { view_id: view.value.view_id, comment: 'R35 新意见', annotations: [] });
+  assert.equal(issue.value.issue_id, 'R35_I1');
+
+  const finished = await post(app.url, '/api/review/finish', {});
+  assert.equal(finished.response.status, 200);
+  assert.equal(finished.value.review_revision, 'R35');
+  assert.equal(finished.value.issue_counts.submitted, 1);
+  const saved = JSON.parse(await fs.readFile(path.join(app.pkg, 'review-session.json'), 'utf8'));
+  assert.equal(saved.phase, 'feedback_submitted');
+  assert.equal(saved.completed_revision, 'R35');
+  const after = await post(app.url, '/api/issues', { view_id: view.value.view_id, comment: '完成后写入', annotations: [] });
+  assert.equal(after.response.status, 400);
+});
+
 test('published revision is default; captures and issues retain R34 provenance', async (t) => {
   const app = await fixture(); t.after(app.close);
+  const legacy=await post(app.url,'/api/views',{camera,G:onePixel,B_before:onePixel});
+  const old=await post(app.url,'/api/issues',{view_id:legacy.value.view_id,comment:'R33 original'});
+  assert.equal(old.value.issue_id,'R33_I1'); assert.equal(old.value.base_revision,'R33');
   const dir = path.join(app.pkg, 'results/R34'); await fs.mkdir(dir, {recursive:true});
   await fs.writeFile(path.join(dir, 'B_R34.glb'), 'model');
   await fs.writeFile(path.join(dir, 'B_R34.export.json'), JSON.stringify({glb_sha256:'r34-hash'}));
   const mf = path.join(app.pkg,'manifest.json'); const manifest = JSON.parse(await fs.readFile(mf));
   manifest.results=[{revision:'R34'}]; await fs.writeFile(mf,JSON.stringify(manifest));
-  await fs.writeFile(path.join(app.pkg,'review-session.json'),JSON.stringify({mode:'result',result_revision:'R34'}));
+  await fs.writeFile(path.join(app.pkg,'review-session.json'),JSON.stringify({schema_version:1,manifest_path:mf,phase:'reviewing',mode:'result',result_revision:'R34',pid:process.pid}));
   const state = await (await fetch(app.url+'/api/state')).json();
   assert.equal(state.activeRevision,'R34'); assert.equal(state.resultModels[0].sha256,'r34-hash');
   const wrong=await post(app.url,'/api/views',{camera,G:onePixel,B_before:onePixel,model_revision:'R34'});
@@ -104,7 +147,6 @@ test('published revision is default; captures and issues retain R34 provenance',
   assert.equal(saved.response.status,201); assert.equal(saved.value.camera.model_revision,'R34');
   const issue=await post(app.url,'/api/issues',{view_id:saved.value.view_id,comment:'R34 new problem'});
   assert.equal(issue.value.issue_id,'R34_I1'); assert.equal(issue.value.base_revision,'R34');
-  const legacy=await post(app.url,'/api/views',{camera,G:onePixel,B_before:onePixel});
-  const old=await post(app.url,'/api/issues',{view_id:legacy.value.view_id,comment:'R33 original'});
-  assert.equal(old.value.issue_id,'R33_I1'); assert.equal(old.value.base_revision,'R33');
+  const blocked=await post(app.url,'/api/issues',{view_id:legacy.value.view_id,comment:'不能归入旧轮次'});
+  assert.equal(blocked.response.status,400);
 });

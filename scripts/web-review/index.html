@@ -9,7 +9,7 @@
     <div id="app">
       <header class="topbar">
         <div><div class="eyebrow">LOCAL REVIEW</div><h1>3DGS × 模型审阅</h1></div>
-        <div class="top-actions"><span id="package-label" class="chip">加载中</span><button id="refresh-button" class="quiet">刷新记录</button></div>
+        <div class="top-actions"><span id="package-label" class="chip">加载中</span><button id="refresh-button" class="quiet">刷新记录</button><button id="finish-review" class="primary" disabled>完成 Review</button></div>
       </header>
       <main>
         <section class="workspace">
@@ -31,6 +31,10 @@
         </aside>
       </main>
       <footer><span id="global-status">准备中</span><span>模型与原始扫描只读 · 记录写入所选审阅包</span></footer>
+    </div>
+
+    <div id="review-complete" class="completion-screen hidden" role="status" aria-live="polite">
+      <div class="completion-card"><div class="eyebrow">REVIEW COMPLETE</div><h2 id="complete-title">本轮审阅已完成</h2><p id="complete-message">意见已保存，可以关闭此页面。</p></div>
     </div>
 
     <div id="review-dialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">

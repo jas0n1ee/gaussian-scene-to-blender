@@ -14,6 +14,7 @@ button.danger { color: #b13335; border-color: #e8bdbe; }
 .topbar h1 { margin: 2px 0 0; font-size: 20px; letter-spacing: -.025em; }
 .eyebrow { color: #498673; font-size: 10px; font-weight: 800; letter-spacing: .15em; }
 .top-actions, .tool-group { display: flex; align-items: center; gap: 8px; }
+.top-actions { flex-wrap: wrap; justify-content: flex-end; }
 .chip { border-radius: 16px; background: #e9f3ee; padding: 6px 12px; color: #246551; font-size: 12px; font-weight: 650; }
 main { display: grid; grid-template-columns: minmax(0, 1fr) 315px; min-height: calc(100vh - 118px); }
 .workspace { padding: 16px; min-width: 0; }
@@ -72,5 +73,9 @@ footer { height: 38px; display: flex; justify-content: space-between; align-item
 .box-info, .dialog-actions { display: flex; align-items: center; gap: 6px; }
 .box-info { font-size: 11px; color: #7d8a80; }
 .response { font-size: 12px; color: #516258; line-height: 1.45; }
+.completion-screen { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: #13231cdb; }
+.completion-card { width: min(460px, 100%); padding: 30px; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px #08150d66; text-align: center; }
+.completion-card h2 { margin: 12px 0 8px; font-size: 22px; }
+.completion-card p { margin: 0; color: #52665a; line-height: 1.6; }
 @media (max-width: 1100px) { main { grid-template-columns: 1fr; }.sidebar { max-height: none; border-left: 0; border-top: 1px solid #dce3df; }.modal-images:has(#after-column:not(.hidden)) { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px) { .topbar { padding: 10px; }.dual-view, .modal-images, .modal-images:has(#after-column:not(.hidden)) { grid-template-columns: 1fr; }.toolbar { flex-wrap: wrap; }.modal { padding: 6px; } }

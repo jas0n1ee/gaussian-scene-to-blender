@@ -73,6 +73,27 @@ export class ReviewStore {
     return next;
   }
 
+  async reviewSession() {
+    const file = path.join(this.packageDir, 'review-session.json');
+    const session = await readJson(file).catch((error) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (session && session.manifest_path !== this.manifestPath) throw new Error('Review 会话与审阅包不匹配');
+    return session;
+  }
+
+  reviewRevision(session) {
+    return session?.mode === 'result' ? session.result_revision : this.manifest.base_revision;
+  }
+
+  async assertReviewWritable(revision) {
+    const session = await this.reviewSession();
+    if (!session) return; // Existing packages without an Agent session remain readable and editable.
+    if (session.phase !== 'reviewing') throw new Error('本轮 Review 已完成，不能继续修改意见');
+    if (revision !== this.reviewRevision(session)) throw new Error('此机位不属于当前审阅版本');
+  }
+
   assetPath(asset) {
     if (!asset?.path || path.isAbsolute(asset.path)) throw new Error('显示资产路径无效');
     const base = asset.path_base === 'manifest_directory' ? this.packageDir : this.projectRoot;
@@ -150,9 +171,9 @@ export class ReviewStore {
       try { report = await readJson(path.join(resultsRoot, revision, `B_${revision}.export.json`)); assetToProject = report.asset_to_project; } catch { /* original GLB axis convention */ }
       resultModels.push({ revision, sha256: report.glb_sha256, source_sha256: report.source_sha256, url: `/file/results/${encodeURIComponent(revision)}/B_${encodeURIComponent(revision)}.glb`, asset_to_project: assetToProject || b?.asset_to_project || null });
     }
-    let session = null;
-    try { session = await readJson(path.join(this.packageDir, 'review-session.json')); } catch {}
+    const session = await this.reviewSession();
     const activeRevision = session?.mode === 'result' && resultModels.some(m => m.revision === session.result_revision) ? session.result_revision : 'base';
+    const reviewRevision = activeRevision === 'base' ? this.manifest.base_revision : activeRevision;
     let homeCamera = null;
     try { homeCamera = await readJson(path.join(this.packageDir, 'diagnostics', 'camera.json')); } catch { /* optional */ }
     return {
@@ -162,7 +183,8 @@ export class ReviewStore {
         B: b ? { ...this.manifest.display_assets.B, url: '/asset/B' } : null,
         G: g ? { ...this.manifest.display_assets.G, url: `/display/${encodeURIComponent(path.basename(g.file))}` } : null,
       },
-      views, issues, homeCamera, resultModels, activeRevision,
+      views, issues, homeCamera, resultModels, activeRevision, reviewRevision,
+      reviewSession: session ? { phase: session.phase, completed_at: session.completed_at || null } : null,
     };
   }
 
@@ -174,6 +196,7 @@ export class ReviewStore {
       if (g.width !== b.width || g.height !== b.height) throw new Error('两侧截图尺寸不一致');
       const camera = structuredClone(body.camera || {});
       const revision = body.model_revision || this.manifest.base_revision;
+      await this.assertReviewWritable(revision);
       if (revision !== this.manifest.base_revision) {
         if (!this.manifest.results?.some(r => r.revision === revision)) throw new Error('未登记的模型版本');
         const report = await readJson(path.join(this.packageDir, 'results', revision, `B_${revision}.export.json`));
@@ -226,6 +249,7 @@ export class ReviewStore {
       validAnnotations(annotations);
       const viewCamera = await readJson(path.join(this.packageDir, 'views', viewId, 'camera.json'));
       const viewRevision = viewCamera.model_revision || this.manifest.base_revision;
+      await this.assertReviewWritable(viewRevision);
       const issuesRoot = path.join(this.packageDir, 'issues');
       await fs.mkdir(issuesRoot, { recursive: true });
       let id = body.issue_id;
@@ -263,6 +287,7 @@ export class ReviewStore {
     return this.enqueue(async () => {
       const file = path.join(this.packageDir, 'issues', `${id}.json`);
       const issue = await readJson(file);
+      await this.assertReviewWritable(issue.base_revision || this.manifest.base_revision);
       issue.history ??= [];
       issue.history.push({ at: now(), action: 'delete' });
       issue.deleted_at = now();
@@ -279,6 +304,7 @@ export class ReviewStore {
       if (!/^[A-Za-z0-9_-]+$/.test(revision || '')) throw new Error('结果版本无效');
       const file = path.join(this.packageDir, 'issues', `${id}.json`);
       const issue = await readJson(file);
+      await this.assertReviewWritable(issue.base_revision || this.manifest.base_revision);
       if (issue.deleted_at) throw new Error('已删除的问题不能复核');
       if (status === 'accepted') {
         const responses = await readJson(path.join(this.packageDir, 'results', revision, 'responses.json'));
@@ -299,6 +325,31 @@ export class ReviewStore {
       issue.updated_at = now();
       await atomicJson(file, issue);
       return issue;
+    });
+  }
+
+  async finishReview() {
+    return this.enqueue(async () => {
+      this.manifest = await readJson(this.manifestPath);
+      const session = await this.reviewSession();
+      if (!session || session.phase !== 'reviewing' || session.pid !== process.pid) {
+        throw new Error('当前网页服务不是 Agent 管理中的 Review 会话');
+      }
+      const revision = this.reviewRevision(session);
+      const counts = { submitted: 0, draft: 0, accepted: 0, returned: 0, deleted: 0 };
+      for (const id of this.manifest.issues || []) {
+        const issue = await readJson(path.join(this.packageDir, 'issues', `${id}.json`));
+        if ((issue.base_revision || this.manifest.base_revision) !== revision) continue;
+        const status = issue.deleted_at ? 'deleted' : issue.status;
+        counts[status] = (counts[status] || 0) + 1;
+      }
+      const completedAt = now();
+      await atomicJson(path.join(this.packageDir, 'review-session.json'), {
+        ...session, phase: 'feedback_submitted', pid: null, url: null,
+        completed_revision: revision, completed_at: completedAt,
+        issue_counts: counts, updated_at: completedAt,
+      });
+      return { phase: 'feedback_submitted', review_revision: revision, issue_counts: counts, completed_at: completedAt };
     });
   }
 

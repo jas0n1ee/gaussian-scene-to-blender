@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { reviewScope } from './review-scope.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
@@ -183,6 +184,7 @@ async function waitForGaussian() {
 }
 async function captureView() {
   if (data.capturePending) return;
+  if (data.loadedVersion !== data.state.activeRevision) { setStatus(`请切回 ${data.state.reviewRevision} 后记录机位`, true); return; }
   if (!data.gReady || !data.bReady || data.loadedVersion !== $('model-version').value) return;
   const version = data.loadedVersion;
   const model = version === 'base' ? data.state.display.B : data.state.resultModels.find(m => m.revision === version);
@@ -235,7 +237,7 @@ async function captureView() {
     rendererG?.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     rendererB?.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     syncSize();
-    $('record-button').disabled = !(data.gReady && data.bReady && data.loadedVersion === $('model-version').value);
+    $('record-button').disabled = !(data.gReady && data.bReady && data.loadedVersion === data.state.activeRevision);
   }
 }
 $('record-button').onclick = captureView;
@@ -266,7 +268,7 @@ async function loadScenes() {
       $('g-status').textContent = '扫描索引已加载 · 等待视点分页';
     } catch (error) { $('g-status').textContent = `扫描失败：${error.message}`; }
   } else $('g-status').textContent = 'RAD 未准备';
-  $('record-button').disabled = !(data.gReady && data.bReady && data.loadedVersion === $('model-version').value);
+  $('record-button').disabled = !(data.gReady && data.bReady && data.loadedVersion === data.state.activeRevision);
   $('asset-note').textContent = data.gReady && data.bReady
     ? '完整扫描以 LoD 分页加载；远处区域会随相机移动自动换入。冻结截图会等待当前分页稳定。'
     : '显示资产尚未齐备。请先在独立副本准备 GLB 和完整扫描 RAD，并登记到 manifest.display_assets。';
@@ -312,23 +314,51 @@ async function showModel(version) {
   sceneB.add(root);
   data.modelRoot = root;
   $('b-status').textContent = `${version === 'base' ? data.state.manifest.base_revision : version} 模型已加载`;
-  $('record-button').disabled = !(data.gReady && data.bReady && !data.captureBusy);
+  $('record-button').disabled = !(data.gReady && data.bReady && !data.captureBusy && version === data.state.activeRevision);
 }
 $('model-version').onchange = async (event) => {
   try { await showModel(event.target.value); } catch (error) { $('b-status').textContent = `模型失败：${error.message}`; }
 };
 
 function renderSidebar() {
-  const issues = data.state.issues.filter((item) => !item.deleted_at);
-  $('package-label').textContent = `${data.state.manifest.project_id || '项目'} · ${data.state.manifest.base_revision}`;
+  const { revision, issues, views } = reviewScope(data.state);
+  $('package-label').textContent = `${data.state.manifest.project_id || '项目'} · ${revision}`;
   $('issue-count').textContent = String(issues.length);
   const counts = Object.groupBy(issues, (i) => i.status);
   $('summary').innerHTML = `<span>待处理 ${counts.submitted?.length || 0}</span><span>草稿 ${counts.draft?.length || 0}</span><span>通过 ${counts.accepted?.length || 0}</span><span>退回 ${counts.returned?.length || 0}</span>`;
-  $('view-list').innerHTML = `<div class="list-label">已存机位 · ${data.state.views.length}</div>${data.state.views.length ? data.state.views.map((v) => `<button data-view="${esc(v.view_id)}">${esc(v.view_id)} · 定位 / 新意见</button>`).join('') : '<div class="empty">暂无机位，漫游后点“记录新机位”。</div>'}`;
-  $('issue-list').innerHTML = `<div class="list-label">问题列表</div>${issues.length ? issues.map((i) => `<button class="issue-card" data-issue="${esc(i.issue_id)}"><strong>${esc(i.issue_id)}</strong><small>${esc(i.status)}</small><p>${esc(i.comment)}</p></button>`).join('') : '<div class="empty">暂无意见。</div>'}`;
+  $('view-list').innerHTML = `<div class="list-label">本轮机位 · ${views.length}</div>${views.length ? views.map((v) => `<button data-view="${esc(v.view_id)}">${esc(v.view_id)} · 定位 / 新意见</button>`).join('') : '<div class="empty">暂无本轮机位，漫游后点“记录新机位”。</div>'}`;
+  $('issue-list').innerHTML = `<div class="list-label">本轮问题</div>${issues.length ? issues.map((i) => `<button class="issue-card" data-issue="${esc(i.issue_id)}"><strong>${esc(i.issue_id)}</strong><small>${esc(i.status)}</small><p>${esc(i.comment)}</p></button>`).join('') : '<div class="empty">暂无本轮意见。</div>'}`;
+  $('finish-review').disabled = data.state.reviewSession?.phase !== 'reviewing';
+  if (data.state.reviewSession?.phase === 'feedback_submitted') showCompletion({ review_revision: revision });
   for (const button of $('view-list').querySelectorAll('[data-view]')) button.onclick = () => { const id = button.dataset.view; locateView(id); openEditor(id); };
   for (const button of $('issue-list').querySelectorAll('[data-issue]')) button.onclick = () => openIssue(button.dataset.issue);
 }
+function showCompletion(result) {
+  data.frozen = true;
+  data.keys.clear();
+  $('record-button').disabled = true;
+  $('finish-review').disabled = true;
+  $('review-complete').classList.remove('hidden');
+  $('complete-title').textContent = `${result.review_revision} Review 已完成`;
+  const count = result.issue_counts?.submitted;
+  $('complete-message').textContent = `${count == null ? '本轮意见' : `本轮 ${count} 条已提交意见`}已保存。Agent 可读取结果；可以关闭此页面。`;
+}
+$('finish-review').onclick = async () => {
+  const revision = data.state?.reviewRevision;
+  if (!revision || data.state.reviewSession?.phase !== 'reviewing') return;
+  const drafts = reviewScope(data.state).issues.filter((item) => item.status === 'draft').length;
+  const warning = drafts ? `另有 ${drafts} 条草稿不会交给 Agent。` : '';
+  if (!confirm(`确定完成 ${revision} Review？${warning}完成后本轮不能继续编辑。`)) return;
+  $('finish-review').disabled = true;
+  try {
+    const result = await api('/api/review/finish', 'POST');
+    data.state.reviewSession = { phase: result.phase, completed_at: result.completed_at };
+    showCompletion(result);
+  } catch (error) {
+    $('finish-review').disabled = false;
+    setStatus(`完成 Review 失败：${error.message}`, true);
+  }
+};
 async function refresh() {
   data.state = await api('/api/state');
   renderSidebar();
@@ -500,7 +530,9 @@ for (const [id, status] of [['accept-issue', 'accepted'], ['return-issue', 'retu
 
 async function start() {
   await refresh();
-  cameraFromRecord(data.state.homeCamera || data.state.views?.[0]?.camera);
+  if (data.state.reviewSession?.phase === 'feedback_submitted') return;
+  const currentView = data.state.views.find((item) => (item.camera.model_revision || data.state.manifest.base_revision) === data.state.reviewRevision);
+  cameraFromRecord(currentView?.camera || data.state.homeCamera || data.state.views?.[0]?.camera);
   const params = new URLSearchParams(location.search);
   const position = ['x', 'y', 'z'].map((key) => Number(params.get(key)));
   if (['x', 'y', 'z'].every((key) => params.has(key)) && position.every((value) => Number.isFinite(value) && Math.abs(value) < 1000)) {
