@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3DGS × 模型审阅</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div><div class="eyebrow">LOCAL REVIEW</div><h1>3DGS × 模型审阅</h1></div>
+        <div class="top-actions"><span id="package-label" class="chip">加载中</span><button id="refresh-button" class="quiet">刷新记录</button></div>
+      </header>
+      <main>
+        <section class="workspace">
+          <div class="toolbar">
+            <div class="tool-group"><button id="record-button" class="primary" disabled>记录新机位</button></div>
+            <div class="tool-group"><label>右侧模型 <select id="model-version" aria-label="右侧模型版本"><option value="base">基础版</option></select></label><label>移动速度 <input id="speed" type="range" min="0.5" max="8" step="0.5" value="3" /></label><span id="nav-state" class="status-text">等待资产</span></div>
+          </div>
+          <div class="dual-view">
+            <section class="view-panel" id="g-panel"><div class="view-heading"><strong>G · 完整 3DGS 扫描</strong><span id="g-status">等待加载</span></div><div class="view-body"><canvas id="g-canvas" tabindex="0" aria-label="左侧高斯视图"></canvas><div class="view-hint"><strong>请把鼠标放在左视图上，再开始用键盘控制相机移动</strong><span>W A S D / Q E 移动 · 方向键转向</span></div></div></section>
+            <section class="view-panel"><div class="view-heading"><strong>B · Blender 模型</strong><span id="b-status">等待加载</span></div><div class="view-body"><canvas id="b-canvas"></canvas></div></section>
+          </div>
+          <p class="asset-note" id="asset-note">读取审阅包…</p>
+        </section>
+        <aside class="sidebar">
+          <div class="sidebar-heading"><h2>审阅意见</h2><span id="issue-count" class="count">0</span></div>
+          <div id="summary" class="summary"></div>
+          <div id="view-list" class="view-list"></div>
+          <div id="issue-list" class="issue-list"></div>
+        </aside>
+      </main>
+      <footer><span id="global-status">准备中</span><span>模型与原始扫描只读 · 记录写入所选审阅包</span></footer>
+    </div>
+
+    <div id="review-dialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <div class="modal-card">
+        <div class="modal-header"><div><div id="dialog-kicker" class="eyebrow">机位</div><h2 id="dialog-title">记录问题</h2></div><button id="close-dialog" class="quiet">关闭</button></div>
+        <div class="modal-content">
+          <div class="modal-images">
+            <div><div class="image-title">G · 扫描证据 <span>可画框</span></div><div class="image-frame"><img id="issue-g-image" alt="扫描截图" /><svg id="issue-g-overlay" class="annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none"></svg></div></div>
+            <div><div class="image-title">B · 修改前 <span>可画框</span></div><div class="image-frame"><img id="issue-b-image" alt="模型修改前截图" /><svg id="issue-b-overlay" class="annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none"></svg></div></div>
+            <div id="after-column" class="hidden"><div class="image-title">B · 修改后 <span id="result-revision"></span></div><div class="image-frame"><img id="issue-after-image" alt="模型修改后截图" /></div><p id="result-response" class="response"></p></div>
+          </div>
+          <div class="form-row"><label for="issue-comment">修改意见</label><div class="quick-phrases" aria-label="常用意见快捷键"><button type="button" data-phrase="1">框选区域细节缺失 <kbd>Alt+1</kbd></button><button type="button" data-phrase="2">框选区域物体朝向错误 <kbd>Alt+2</kbd></button><button type="button" data-phrase="3">框选区域细节有误 <kbd>Alt+3</kbd></button><button type="button" data-phrase="4">框选区域建模 LoD 提一层 <kbd>Alt+4</kbd></button></div><textarea id="issue-comment" rows="3" placeholder="说明需要修改的位置和期望结果；点击上方短语或按 Alt+1～4 可追加"></textarea></div>
+          <div class="dialog-bottom"><div class="box-info"><span id="box-count">0 个框</span><button id="remove-box" class="quiet">撤销最后一个框</button><span id="dialog-message"></span></div><div class="dialog-actions"><button id="delete-issue" class="danger hidden">删除意见</button><button id="return-issue" class="hidden">Return · 退回</button><button id="accept-issue" class="hidden">Accept · 通过</button><button id="new-at-view">同机位新意见</button><button id="save-draft">保存草稿</button><button id="submit-issue" class="primary">提交意见</button></div></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
