@@ -3,13 +3,14 @@ import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ReviewStore, inside } from './lib/review-store.mjs';
+import { createTourStore } from './lib/tour/review-adapter.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(root, 'dist');
 
 function contentType(file) {
   const ext = path.extname(file).toLowerCase();
-  return ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.glb': 'model/gltf-binary', '.rad': 'application/octet-stream', '.radc': 'application/octet-stream', '.svg': 'image/svg+xml' })[ext] || 'application/octet-stream';
+  return ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.mp4': 'video/mp4', '.glb': 'model/gltf-binary', '.rad': 'application/octet-stream', '.radc': 'application/octet-stream', '.svg': 'image/svg+xml' })[ext] || 'application/octet-stream';
 }
 
 function json(res, code, value) {
@@ -18,6 +19,9 @@ function json(res, code, value) {
 }
 
 async function bodyJson(req) {
+  return JSON.parse((await bodyBytes(req)).toString('utf8'));
+}
+async function bodyBytes(req) {
   let size = 0;
   const parts = [];
   for await (const chunk of req) {
@@ -25,7 +29,7 @@ async function bodyJson(req) {
     if (size > 32 * 1024 * 1024) throw new Error('提交内容过大');
     parts.push(chunk);
   }
-  return JSON.parse(Buffer.concat(parts).toString('utf8'));
+  return Buffer.concat(parts);
 }
 
 async function fileResponse(req, res, file) {
@@ -66,10 +70,37 @@ async function fileResponse(req, res, file) {
 export async function createReviewServer({ manifestPath, port = 4173, closeOnFinish = false } = {}) {
   if (!manifestPath) throw new Error('请用 --manifest 指定审阅包 manifest.json');
   const store = await new ReviewStore(manifestPath).initialize();
+  const tours = createTourStore(store);
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
       const pathname = decodeURIComponent(url.pathname);
+      if (pathname.startsWith('/api/tour') && !['GET','HEAD'].includes(req.method) && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) throw new Error('只接受当前本机页面的写入');
+      if (pathname === '/api/tours' && req.method === 'GET') return json(res,200,await tours.list());
+      const routeMatch=/^\/api\/tours\/([A-Za-z0-9_-]{1,80})$/.exec(pathname);
+      if(routeMatch && req.method==='GET') return json(res,200,await tours.route(routeMatch[1]));
+      if(routeMatch && req.method==='PUT') return json(res,200,await tours.saveRoute(routeMatch[1],await bodyJson(req)));
+      if(pathname==='/api/tour-jobs' && req.method==='POST') return json(res,201,await tours.createJob(await bodyJson(req)));
+      const jobMatch=/^\/api\/tour-jobs\/([A-Za-z0-9_-]{1,80})(?:\/(frames|finish|cancel|resume))?$/.exec(pathname);
+      if(jobMatch){
+        const [,id,action]=jobMatch;
+        if(req.method==='GET'&&!action)return json(res,200,await tours.job(id));
+        if(req.method==='GET'&&action==='frames')return json(res,200,await tours.frames(id));
+        if(req.method==='POST'&&action==='finish')return json(res,202,await tours.finish(id));
+        if(req.method==='POST'&&action==='cancel')return json(res,200,await tours.cancel(id));
+        if(req.method==='POST'&&action==='resume')return json(res,200,await tours.resume(id));
+      }
+      const frameMatch=/^\/api\/tour-jobs\/([A-Za-z0-9_-]{1,80})\/frames\/([A-Za-z0-9_-]{1,80})\/(\d+)$/.exec(pathname);
+      if(frameMatch&&req.method==='PUT')return json(res,201,await tours.saveFrame(frameMatch[1],frameMatch[2],Number(frameMatch[3]),await bodyBytes(req),JSON.parse(req.headers['x-frame-meta']||'{}')));
+      const videoFile=/^\/tour-file\/([A-Za-z0-9_-]{1,80})\/([A-Za-z0-9_.-]+)$/.exec(pathname);
+      if(videoFile&&['GET','HEAD'].includes(req.method))return await fileResponse(req,res,await tours.publicFile(videoFile[1],videoFile[2]));
+      const extraAsset=/^\/tour-asset\/(B_[A-Za-z0-9_-]{1,60})$/.exec(pathname);
+      if(extraAsset&&['GET','HEAD'].includes(req.method)){
+        await tours.resolveTracks();
+        const catalogue=JSON.parse(await fs.readFile(path.join(store.packageDir,'tours','models.json'),'utf8'));
+        const asset=catalogue.find(a=>a.id===extraAsset[1]);if(!asset)throw new Error('模型未登记');
+        return await fileResponse(req,res,await fs.realpath(store.assetPath(asset)));
+      }
       if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, {
         manifest_path: store.manifestPath,
         review_id: store.manifest.review_id,
@@ -78,6 +109,7 @@ export async function createReviewServer({ manifestPath, port = 4173, closeOnFin
       });
       if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, await store.state());
       if (pathname === '/api/review/finish' && req.method === 'POST') {
+        if(tours.running.size)throw new Error('请先完成或取消视频任务');
         const result = await store.finishReview();
         json(res, 200, result);
         if (closeOnFinish) setTimeout(() => server.close(), 250);
@@ -127,7 +159,8 @@ export async function createReviewServer({ manifestPath, port = 4173, closeOnFin
     }
   });
   await new Promise((resolve, reject) => server.once('error', reject).listen(port, '127.0.0.1', resolve));
-  return { server, store, url: `http://127.0.0.1:${server.address().port}` };
+  server.on('close',()=>{void tours.close();});
+  return { server, store, tours, url: `http://127.0.0.1:${server.address().port}` };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
+const page = await browser.newPage({ viewport: { width: 1600, height: 950 } });
+await page.goto(process.argv[2], { waitUntil: 'networkidle' });
+await page.waitForTimeout(12000);
+await page.mouse.move(300, 400);
+await page.keyboard.down('ArrowLeft'); await page.waitForTimeout(900); await page.keyboard.up('ArrowLeft');
+await page.keyboard.down('w'); await page.waitForTimeout(2500); await page.keyboard.up('w');
+await page.waitForTimeout(1500);
+await page.screenshot({ path: process.argv[3] });
+const info = await page.evaluate(() => document.body.innerText.split('\n').filter(l => l.includes('FPS') || l.includes('x 0')).slice(0, 3));
+console.log(JSON.stringify(info));
+await browser.close();

@@ -150,3 +150,20 @@ test('published revision is default; captures and issues retain R34 provenance',
   const blocked=await post(app.url,'/api/issues',{view_id:legacy.value.view_id,comment:'不能归入旧轮次'});
   assert.equal(blocked.response.status,400);
 });
+
+test('active result can review its previous-round response without editing old issue text', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  await post(app.url, '/api/views', { camera, G: onePixel, B_before: onePixel });
+  await post(app.url, '/api/issues', { view_id: 'V0001', comment: 'fix road', submit: true });
+  const resultDir = path.join(app.pkg, 'results', 'R34', 'views', 'V0001');
+  await fs.mkdir(resultDir, { recursive: true });
+  await fs.writeFile(path.join(resultDir, 'B_after.png'), Buffer.from(onePixel.split(',')[1], 'base64'));
+  await fs.writeFile(path.join(app.pkg, 'results', 'R34', 'responses.json'), JSON.stringify({result_revision:'R34',issues:{R33_I1:{response:'fixed'}}}));
+  await fs.writeFile(path.join(app.pkg,'review-session.json'),JSON.stringify({schema_version:1,manifest_path:path.join(app.pkg,'manifest.json'),phase:'reviewing',mode:'result',result_revision:'R34'}));
+  const edited = await post(app.url, '/api/issues', {issue_id:'R33_I1', view_id:'V0001', comment:'changed'});
+  assert.notEqual(edited.response.status, 200);
+  const accepted = await post(app.url, '/api/issues/R33_I1/review', {status:'accepted', result_revision:'R34'});
+  assert.equal(accepted.value.status, 'accepted');
+  const wrong = await post(app.url, '/api/issues/R33_I1/review', {status:'returned', result_revision:'R35'});
+  assert.notEqual(wrong.response.status, 200);
+});

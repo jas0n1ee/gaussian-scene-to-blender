@@ -1,0 +1,22 @@
+{
+  "name": "@gaussian-blender/camera-tour",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./core.mjs",
+    "./render-job": "./render-job.mjs",
+    "./store": "./store.mjs",
+    "./encoder": "./encoder.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "core.mjs",
+    "render-job.mjs",
+    "store.mjs",
+    "encoder.mjs",
+    "README.md"
+  ]
+}

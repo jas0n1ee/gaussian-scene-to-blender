@@ -304,7 +304,14 @@ export class ReviewStore {
       if (!/^[A-Za-z0-9_-]+$/.test(revision || '')) throw new Error('结果版本无效');
       const file = path.join(this.packageDir, 'issues', `${id}.json`);
       const issue = await readJson(file);
-      await this.assertReviewWritable(issue.base_revision || this.manifest.base_revision);
+      const session = await this.reviewSession();
+      if (session?.mode === 'result') {
+        await this.assertReviewWritable(revision);
+        const responses = await readJson(path.join(this.packageDir, 'results', revision, 'responses.json'));
+        if (!responses.issues?.[id]?.response) throw new Error('该问题不属于当前修订复核');
+      } else {
+        await this.assertReviewWritable(issue.base_revision || this.manifest.base_revision);
+      }
       if (issue.deleted_at) throw new Error('已删除的问题不能复核');
       if (status === 'accepted') {
         const responses = await readJson(path.join(this.packageDir, 'results', revision, 'responses.json'));

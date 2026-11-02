@@ -3,10 +3,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { reviewScope } from './review-scope.js';
 import './style.css';
+import { createTourRenderAdapter } from './tour-render-adapter.js';
+import { createTourController } from './tour-controller.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const NAV_BOOST_MULTIPLIER = 10;
 const matrix4 = (rows) => new THREE.Matrix4().set(...rows.flat());
 const data = { state: null, issue: null, viewId: null, boxes: [], drawing: null, navHot: false, frozen: false, keys: new Set(), moving: false, gReady: false, bReady: false, gSplat: null, spark: null, revision: null, lastGNetwork: 0, captureBusy: false, capturePending: false, savingIssue: false, modelCache: new Map(), modelRoot: null, loadedVersion: null, modelLoadToken: 0 };
 
@@ -29,7 +32,7 @@ const makeRenderer = (canvas) => {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   return renderer;
 };
-let rendererG, rendererB;
+let rendererG, rendererB, tourController;
 try {
   rendererG = makeRenderer($('g-canvas'));
   rendererB = makeRenderer($('b-canvas'));
@@ -82,15 +85,16 @@ function applyPose() {
   }
 }
 function syncSize() {
-  if (!rendererG || !rendererB) return;
+  if (!rendererG || !rendererB || data.tourExport) return;
   const width = Math.max(2, $('g-canvas').parentElement.clientWidth);
-  const height = Math.max(2, Math.round(width / 1.5));
+  const aspect = data.tourAspect || 1.5;
+  const height = Math.max(2, Math.round(width / aspect));
   const bw = Math.max(2, $('b-canvas').parentElement.clientWidth);
-  const bh = Math.max(2, Math.round(bw / 1.5));
+  const bh = Math.max(2, Math.round(bw / aspect));
   rendererG.setSize(width, height, false);
   rendererB.setSize(bw, bh, false);
-  cameraG.aspect = 1.5;
-  cameraB.aspect = 1.5;
+  cameraG.aspect = aspect;
+  cameraB.aspect = aspect;
   cameraG.updateProjectionMatrix();
   cameraB.updateProjectionMatrix();
 }
@@ -108,7 +112,8 @@ function tickNavigation(dt) {
   if (keys.has('ArrowUp')) pose.pitch = Math.min(1.45, pose.pitch + turn);
   if (keys.has('ArrowDown')) pose.pitch = Math.max(-1.45, pose.pitch - turn);
   updateQuaternion();
-  const move = Number($('speed').value) * dt;
+  const boost = keys.has('Shift') ? NAV_BOOST_MULTIPLIER : 1;
+  const move = Number($('speed').value) * boost * dt;
   const forward = new THREE.Vector3(Math.sin(pose.yaw), Math.cos(pose.yaw), 0);
   const right = new THREE.Vector3(forward.y, -forward.x, 0);
   if (keys.has('KeyW')) pose.position.addScaledVector(forward, move);
@@ -125,6 +130,7 @@ function frame(time) {
   const dt = Math.min((time - previousFrame) / 1000, .06);
   previousFrame = time;
   if (document.hidden) { requestAnimationFrame(frame); return; }
+  tourController?.tick(time);
   tickNavigation(dt);
   applyPose();
   if (rendererG && rendererB && !data.captureBusy && $('review-dialog').classList.contains('hidden')) {
@@ -147,15 +153,25 @@ function frame(time) {
 requestAnimationFrame(frame);
 
 const movementKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
+const boostKeys = new Set(['ShiftLeft', 'ShiftRight']);
 window.addEventListener('keydown', (event) => {
-  if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-  if (movementKeys.has(event.code) && data.navHot && !data.frozen && $('review-dialog').classList.contains('hidden')) {
-    data.keys.add(event.code);
-    if (!event.repeat) tickNavigation(1 / 30);
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+  if ((movementKeys.has(event.code) || boostKeys.has(event.code)) && data.navHot && !data.frozen && $('review-dialog').classList.contains('hidden')) {
+    // Read the modifier on every event so Shift can be held before entering the
+    // viewport, or pressed/released while a movement key is already held.
+    if (event.shiftKey) data.keys.add('Shift');
+    else data.keys.delete('Shift');
+    if (movementKeys.has(event.code)) {
+      data.keys.add(event.code);
+      if (!event.repeat) tickNavigation(1 / 30);
+    }
     event.preventDefault();
   }
 });
-window.addEventListener('keyup', (event) => data.keys.delete(event.code));
+window.addEventListener('keyup', (event) => {
+  data.keys.delete(event.code);
+  if (!event.shiftKey) data.keys.delete('Shift');
+});
 window.addEventListener('blur', () => data.keys.clear());
 $('g-panel').addEventListener('mouseenter', () => { data.navHot = true; });
 $('g-panel').addEventListener('mouseleave', () => { data.navHot = false; data.keys.clear(); });
@@ -328,6 +344,8 @@ function renderSidebar() {
   $('summary').innerHTML = `<span>待处理 ${counts.submitted?.length || 0}</span><span>草稿 ${counts.draft?.length || 0}</span><span>通过 ${counts.accepted?.length || 0}</span><span>退回 ${counts.returned?.length || 0}</span>`;
   $('view-list').innerHTML = `<div class="list-label">本轮机位 · ${views.length}</div>${views.length ? views.map((v) => `<button data-view="${esc(v.view_id)}">${esc(v.view_id)} · 定位 / 新意见</button>`).join('') : '<div class="empty">暂无本轮机位，漫游后点“记录新机位”。</div>'}`;
   $('issue-list').innerHTML = `<div class="list-label">本轮问题</div>${issues.length ? issues.map((i) => `<button class="issue-card" data-issue="${esc(i.issue_id)}"><strong>${esc(i.issue_id)}</strong><small>${esc(i.status)}</small><p>${esc(i.comment)}</p></button>`).join('') : '<div class="empty">暂无本轮意见。</div>'}`;
+  const resultIssues = data.state.issues.filter(i => !i.deleted_at && data.resultIssueIds?.includes(i.issue_id));
+  if (resultIssues.length) $('issue-list').innerHTML = `<div class="list-label">本轮修订复核 · ${resultIssues.length}</div>${resultIssues.map(i => `<button class="issue-card" data-issue="${esc(i.issue_id)}"><strong>${esc(i.issue_id)}</strong><small>${esc(i.status)}</small><p>${esc(i.comment)}</p></button>`).join('')}` + $('issue-list').innerHTML;
   $('finish-review').disabled = data.state.reviewSession?.phase !== 'reviewing';
   if (data.state.reviewSession?.phase === 'feedback_submitted') showCompletion({ review_revision: revision });
   for (const button of $('view-list').querySelectorAll('[data-view]')) button.onclick = () => { const id = button.dataset.view; locateView(id); openEditor(id); };
@@ -361,6 +379,12 @@ $('finish-review').onclick = async () => {
 };
 async function refresh() {
   data.state = await api('/api/state');
+  data.resultIssueIds = [];
+  if (data.state.activeRevision && data.state.activeRevision !== 'base') {
+    const revision = data.state.activeRevision;
+    const responses = await api(`/file/results/${encodeURIComponent(revision)}/responses.json`);
+    data.resultIssueIds = Object.keys(responses.issues || {});
+  }
   renderSidebar();
   renderModelChoices();
   return data.state;
@@ -549,5 +573,9 @@ async function start() {
   applyPose();
   syncSize();
   await loadScenes();
+  if (data.gReady && data.bReady) {
+    const adapter = createTourRenderAdapter({ data, pose, sceneG, sceneB, cameraG, cameraB, rendererG, rendererB, applyPose, syncSize, showModel });
+    tourController = createTourController({ adapter, state: () => data.state, hostBusy: () => data.capturePending || !$('review-dialog').classList.contains('hidden') });
+  } else $('tour-open').disabled = true;
 }
 start().catch((error) => setStatus(`打开审阅包失败：${error.message}`, true));

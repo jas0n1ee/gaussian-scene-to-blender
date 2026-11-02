@@ -9,21 +9,53 @@
     <div id="app">
       <header class="topbar">
         <div><div class="eyebrow">LOCAL REVIEW</div><h1>3DGS × 模型审阅</h1></div>
-        <div class="top-actions"><span id="package-label" class="chip">加载中</span><button id="refresh-button" class="quiet">刷新记录</button><button id="finish-review" class="primary" disabled>完成 Review</button></div>
+        <div class="top-actions"><span id="package-label" class="chip">加载中</span><button id="tour-open">轨迹视频</button><span id="review-top-actions"><button id="refresh-button" class="quiet">刷新记录</button><button id="finish-review" class="primary" disabled>完成 Review</button></span></div>
       </header>
       <main>
         <section class="workspace">
-          <div class="toolbar">
+          <div class="toolbar" id="review-toolbar">
             <div class="tool-group"><button id="record-button" class="primary" disabled>记录新机位</button></div>
             <div class="tool-group"><label>右侧模型 <select id="model-version" aria-label="右侧模型版本"><option value="base">基础版</option></select></label><label>移动速度 <input id="speed" type="range" min="0.5" max="8" step="0.5" value="3" /></label><span id="nav-state" class="status-text">等待资产</span></div>
           </div>
           <div class="dual-view">
-            <section class="view-panel" id="g-panel"><div class="view-heading"><strong>G · 完整 3DGS 扫描</strong><span id="g-status">等待加载</span></div><div class="view-body"><canvas id="g-canvas" tabindex="0" aria-label="左侧高斯视图"></canvas><div class="view-hint"><strong>请把鼠标放在左视图上，再开始用键盘控制相机移动</strong><span>W A S D / Q E 移动 · 方向键转向</span></div></div></section>
+            <section class="view-panel" id="g-panel"><div class="view-heading"><strong>G · 完整 3DGS 扫描</strong><span id="g-status">等待加载</span></div><div class="view-body"><canvas id="g-canvas" tabindex="0" aria-label="左侧高斯视图"></canvas><div class="view-hint"><strong>请把鼠标放在左视图上，再开始用键盘控制相机移动</strong><span>WASD / QE 移动 · Shift 加速10× · 方向键转向</span></div></div></section>
             <section class="view-panel"><div class="view-heading"><strong>B · Blender 模型</strong><span id="b-status">等待加载</span></div><div class="view-body"><canvas id="b-canvas"></canvas></div></section>
           </div>
           <p class="asset-note" id="asset-note">读取审阅包…</p>
+          <section id="tour-panel" class="tour-panel hidden" aria-label="轨迹视频工作台">
+            <div class="tour-heading"><div><div class="eyebrow">CAMERA TOUR</div><h2>同轨对比视频</h2><p>自由漫游打点，预览平滑路线，再生成 25fps 视频。</p></div><button id="tour-back">返回审阅</button></div>
+            <div class="tour-library-bar"><select id="tour-library" aria-label="已保存路线" data-tour-mutates></select><button id="tour-new" data-tour-mutates>新路线</button><button id="tour-save" data-tour-mutates>保存</button><button id="tour-download-route" data-tour-mutates>导出路线</button><label class="button-label">导入路线<input type="file" id="tour-import-file" accept="application/json,.json" data-tour-mutates/></label></div>
+            <div class="tour-grid">
+              <div id="tour-editor">
+                <div class="tour-nav-row"><label>漫游速度 <input id="tour-nav-speed" type="range" min="0.5" max="8" step="0.5" value="3"/></label><span>WASD / QE 移动 · Shift 加速10× · 方向键转向</span></div>
+                <div class="tour-name-row"><input id="tour-name" aria-label="路线名称" placeholder="路线名称"/><button id="tour-add" class="primary">＋ 添加轨迹点</button></div>
+                <svg id="tour-plan" class="tour-plan" role="img" aria-label="路线俯视预览"></svg>
+                <div class="tour-playback"><button id="tour-play" aria-describedby="tour-preview-status" disabled>播放预览</button><button id="tour-free">自由漫游</button><input id="tour-time" type="range" min="0" max="1" value="0" step="0.04" aria-label="轨迹时间轴"/><span id="tour-time-label">0.00 / 0.00 秒</span></div>
+                <p id="tour-preview-status" class="tour-note" role="status"></p>
+                <p id="tour-summary" class="tour-summary"></p><p id="tour-limits" class="tour-note"></p>
+                <div id="tour-points" class="tour-points"></div>
+              </div>
+              <div class="tour-options">
+                <fieldset id="tour-settings"><legend>运动与取景</legend>
+                  <label>巡航速度上限 <span>场景单位/秒</span><input id="tour-speed" type="number" min="0.05" max="100" step="0.5" value="3"/></label>
+                  <label>加速度上限 <span>场景单位/秒²</span><input id="tour-acceleration" type="number" min="0.05" max="50" step="0.5" value="1.5"/></label>
+                  <label>转头速度上限 <span>度/秒</span><input id="tour-turnRate" type="number" min="1" max="180" step="5" value="35"/></label>
+                  <label>路径平滑程度 <input id="tour-smoothness" type="range" min="0" max="1" step="0.05" value="0.65"/></label>
+                  <label>目标总时长 <span>留空则自动计算运动时长；成片取整到帧</span><input id="tour-duration" type="number" min="0.08" max="3600" step="1" placeholder="自动计算"/></label>
+                  <label>垂直视角 <span>度</span><input id="tour-fov" type="number" min="15" max="110" step="1" value="60"/></label>
+                </fieldset>
+                <fieldset id="tour-output"><legend>输出版本与画幅</legend><div id="tour-tracks" class="tour-tracks"></div>
+                  <label>每个视图的分辨率<select id="tour-resolution"><option value="640x360">640 × 360 · 快速验证</option><option value="1280x720" selected>1280 × 720</option><option value="1920x1080">1920 × 1080</option></select></label>
+                  <p class="tour-note">输出独立视频及 3DGS / 模型左右对比；同一帧使用同一相机。急转弯会减速，路径需预览确认。</p><p id="tour-encoder" class="tour-note"></p>
+                </fieldset>
+              </div>
+            </div>
+            <div class="tour-export-row"><button id="tour-export" class="primary" disabled>生成 25fps 对比视频</button><button id="tour-cancel" class="hidden danger">取消任务</button><progress id="tour-progress" max="1" value="0"></progress><span id="tour-status" role="status" aria-live="polite">准备中…</span></div>
+            <p id="tour-export-note" class="tour-note hidden" role="status"></p>
+            <div id="tour-jobs" class="tour-jobs"></div>
+          </section>
         </section>
-        <aside class="sidebar">
+        <aside class="sidebar" id="review-sidebar">
           <div class="sidebar-heading"><h2>审阅意见</h2><span id="issue-count" class="count">0</span></div>
           <div id="summary" class="summary"></div>
           <div id="view-list" class="view-list"></div>
